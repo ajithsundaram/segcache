@@ -1,0 +1,57 @@
+Researching Segcache features
+It minimizes per-object metadata by using shared segment headers and hash table slots, boosting scalability.
+From the summary, Segcache uses a TTL-indexed bucket array with 1024 buckets, divided into four groups for efficient expiration.
+It employs a bulk-chaining hash table to reduce random memory accesses, improving throughput for lookups.
+I'm thinking about how to translate these features into Kotlin, starting with the hash table.
+Let's outline the main components needed, like hash table, object store, and TTL buckets, to build this server.
+Planning Kotlin implementation
+Each segment is a fixed-size log, say 1 MB, storing objects sequentially, which I'll need to implement in Kotlin.
+The hash table uses bulk-chaining with 8 slots per bucket, so I'll define a data class for HashBucket and HashSlot.
+I'm considering using Kotlin's coroutines for concurrency, but might need locks for performance-critical parts.
+Objects in segments share TTL and creation time, so the segment header will hold these, saving memory.
+The hash table likely stores keys, with slots pointing to values in segments, which helps with get operations.
+I'm figuring out how to handle network requests, assuming basic get, set, and delete with TTL support.
+In Segcache, the tag in hash slots is probably a checksum for key validation, so I'll need to compute it during lookups.
+Each object in the segment likely stores just the value, not the key, to save space, which fits the memory-efficient design.
+The key isn't stored with the value to save memory; instead, the hash table uses the key for hashing and tag verification.
+When retrieving, it checks the tag to ensure the correct value is returned, handling potential collisions with a good hash function.
+The tag helps distinguish keys hashing to the same bucket, so I'll need to compute it from the key for lookups.
+For implementation, I'll use data classes in Kotlin for clarity, though performance might need primitive types later.
+For locks, I'm thinking about using java.util.concurrent.locks.ReentrantLock or AtomicBoolean for spin locks in Kotlin.
+Usage counters and timestamps will be atomic, so I'll use AtomicInteger and AtomicLong for thread safety.
+Designing data structures
+When inserting, map the TTL to a bucket and find a segment with space, creating a new one if needed.
+Objects in segments probably store just the value, with keys handled by the hash table for memory efficiency.
+Each segment is linked to a TTL bucket, so all objects there have similar TTLs, which helps with expiration.
+I'm planning to store objects in segments with size prefixes, like 4 bytes for size then the value, for easy reading.
+TTL buckets are divided into four groups with increasing time widths, so I'll implement an array of 1024 lists for segments.
+Each segment can be a class with a ByteArray, current offset, and creation time, making it easy to manage in Kotlin.
+For expiration, a background thread will scan TTL buckets, removing expired segments to free memory efficiently.
+Merge-based eviction will keep high-value objects, but I'll start with basic structure and add this later for complexity.
+Mapping TTL to a bucket index seems key, so I'll need a function that takes TTL and returns the bucket, possibly using the summary's 1024 buckets divided into four groups with growing time-widths.
+Concurrency is crucial, so I'm leaning towards ReentrantLock for buckets, though spin locks with AtomicBoolean could work for high performance.
+Implementing segment storage
+Segments are 1 MB ByteArrays, with a write position tracking free space. It'll help manage object storage efficiently.
+Writing involves checking space, then storing size and value sequentially. This keeps data compact and easy to read.
+In Kotlin, ByteArray lacks direct int write methods, so I'll implement custom functions for that. It ensures proper data handling.
+I'm drafting some Kotlin code to handle segment storage, starting with a Segment class. Here's what it might look like:
+Each bucket has 8 slots, with 7 for data, so if full, insertion might fail. I'm wondering how Segcache handles this scenario.
+Probably, like hash tables, it could chain to another bucket if full. This could affect performance, so I'll explore options.
+I'm thinking about using open addressing or secondary hashing, but that might complicate the design. Let's see what fits best.
+If a bucket's full, Segcache likely triggers global eviction by merging segments. This keeps memory use in check and aligns with its design.
+For now, I'll assume fixed slots per bucket, and if full, the cache evicts to make space. It'll simplify the initial implementation.
+Let's create the Segment class in Kotlin to handle storage. Here's the code:
+Browsing usenix.org for "implementation details or pseudocode of Segcache"
+No implementation details or pseudocode in that page, just the abstract and metadata.
+I'm considering looking for the full paper. From the search results, there's a link to the PDF: https://www.usenix.org/system/files/nsdi21-yang.pdf
+The function result gives detailed pseudocode for Segcache's hash table, segment management, expiration, and eviction. It covers data structures and algorithms, which is perfect for the Kotlin implementation.
+Each hash bucket has an 8-bit spin lock, usage counter, timestamp, and up to 7 object slots with segment ID, offset, frequency, and tag. This helps with efficient lookups and updates.
+I'm translating these into Kotlin, starting with HashSlot. Frequency is 8-bit, but AtomicInteger in Kotlin is 32-bit, which is fine for now.
+The HashBucket needs an 8-bit spin lock, so I'll use AtomicBoolean. It also has 7 object slots and one overflow, which I'll model as another HashSlot.
+For the overflow, it can point to another bucket, so I'll make it nullable to handle chaining. This keeps the design flexible.
+Defining HashBucket structure
+The HashBucket class will have a spin lock using AtomicBoolean for simplicity. It'll ensure thread-safe access.
+I'm setting up 7 slots for objects and one for overflow, following the pseudocode. This matches Segcache's bulk-chaining approach.
+Usage counter and timestamp will be atomic, using AtomicInteger. It'll help track bucket state safely.
+Each slot stores segment ID, offset, frequency, and tag, which I'll define in HashSlot. This aligns with the memory-efficient design.
+Overflow can chain to another bucket if needed, so I'll make it a nullable HashBucket reference. It'll handle collisions effectively.
